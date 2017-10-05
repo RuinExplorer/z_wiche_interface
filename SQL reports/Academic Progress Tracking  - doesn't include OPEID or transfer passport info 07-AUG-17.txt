@@ -1,0 +1,327 @@
+/*Academic Progress Tracking for Native and Transfer Students*/
+
+SELECT DISTINCT 
+       'PD1' record_type
+      ,popsel.pidm pidm --remove before submitting to NSC
+      /*,deidentified_unique_id_field AS unique_id */
+      ,EXTRACT(YEAR FROM spbpers_birth_date) yob 
+      ,'D' low_income /*USU is not reporting this field*/
+      ,spbpers_sex gender
+      ,rac.race_ethnicity
+      ,CASE WHEN vet.pidm IS NOT NULL THEN 'Y' ELSE 'N' END military_veteran /*this is a student attribute at USU*/
+      ,CASE WHEN sgrsatt_pidm IS NOT NULL THEN 'Y' ELSE 'N' END first_gen /*this is a student attribute at USU*/
+      ,popsel.admit_date
+      ,CASE WHEN popsel.inst_sbgi IS NOT NULL THEN 'Y' ELSE 'N' END transfer_student
+      ,popsel.inst_sbgi  --Will need to convert this to the OPEID code
+      ,popsel.opeid_branch_code
+      ,popsel.inst_name
+      ,popsel.trans_inst_gpa
+      ,popsel.trans_inst_hrs
+      ,CASE WHEN popsel.passport_type IS NOT NULL THEN 'Y' ELSE 'N' END passport
+      ,popsel.passport_type passport_title
+      ,popsel.passport_awarded_date
+      ,CASE WHEN grad.pidm IS NOT NULL THEN 'Y' ELSE 'N' END degree_awarded
+      ,grad.degree_date
+      ,grad.degree_type
+      ,CASE WHEN popsel.majr_cip = 'CONV' THEN NULL ELSE popsel.majr_cip END majr_cip
+      ,SUBSTR(REGEXP_REPLACE(popsel.primary_major,'[^[:alnum:]'' '']', NULL),1,80) major_course_study
+      ,NVL(crse.course_name,'NOT APPLICABLE') course_prefix
+      ,NVL(crse.course_number,'NOT APPLICABLE') course_number
+      ,NVL(SUBSTR(REGEXP_REPLACE(crse.course_title,'[^[:alnum:]'' '']', NULL),1,250),'NOT APPLICABLE') course_description
+      ,crse.course_term_session /*Semesters: Summer, Fall, Spring*/
+      ,crse.course_begin_date
+      ,crse.course_end_date
+      ,crse.course_grade
+      ,crse.grade_effective_date /*optional - only include if your institution captures this data*/
+      ,crse.credits
+      ,crse.credit_description 
+      ,NULL filler1
+      ,NULL filler2
+      ,NULL filler3
+      ,NULL filler4
+      ,NULL filler5
+      ,NULL filler6
+      ,NULL filler7
+      ,NULL filler8
+      ,NULL filler9
+      ,NULL filler10
+      ,NULL filler11
+      ,NULL filler12
+      ,NULL filler13
+      ,NULL filler14
+      ,NULL filler15
+      ,NULL filler16
+      ,NULL filler17
+      ,NULL filler18
+      ,NULL filler19
+      ,NULL filler20
+      ,NULL filler21
+FROM 
+  /*define population of students for the report: native students who have earned the passport in a specified term or students who have transfered in the specified term*/
+  (SELECT DISTINCT  /* native passport students */
+          sr.sgbstdn_pidm pidm
+         ,TO_CHAR(admt.stvterm_start_date, 'YYYYMMDD') admit_date 
+         ,NULL inst_sbgi 
+         ,NULL opeid_branch_code 
+         ,NULL inst_name 
+         ,NULL trans_inst_gpa
+         ,NULL trans_inst_hrs
+         ,'Interstate Passport LDGE' passport_type
+         ,TO_CHAR(shrevnt_effective_date, 'YYYYMMDD') passport_awarded_date
+         ,stvmajr_cipc_code majr_cip
+         ,stvmajr_desc primary_major
+   FROM sgbstdn sr 
+   
+   JOIN shrevnt /*PNS is the native passport event type for the transcript event*/
+     ON sr.sgbstdn_pidm = shrevnt_pidm
+    AND shrevnt_even_code = 'PNS'
+   JOIN stvterm evnt_term
+     ON shrevnt_effective_date BETWEEN evnt_term.stvterm_start_date AND evnt_term.stvterm_end_date
+    AND evnt_term.stvterm_code >= '201640' /*passport award term*/    
+
+   JOIN stvterm admt ON sr.sgbstdn_term_code_admit = admt.stvterm_code
+   JOIN stvmajr ON sr.sgbstdn_majr_code_1 = stvmajr_code
+   WHERE sr.sgbstdn_term_code_eff = (SELECT MAX(jr.sgbstdn_term_code_eff) /*Get the student's max SGASTDN record as of the passport term*/
+                                     FROM sgbstdn jr 
+                                     WHERE sr.sgbstdn_pidm=jr.sgbstdn_pidm 
+                                       AND jr.sgbstdn_term_code_eff <= evnt_term.stvterm_code) 
+     AND sr.sgbstdn_levl_code = 'UG' /*restrict to UG students*/
+    
+  UNION 
+  
+   SELECT DISTINCT  /*transfer students with or without passport*/
+          shrtrit_pidm pidm
+--           sr.saradap_term_code_entry admit_term,
+--           sr.saradap_admt_code admit_type
+         ,TO_CHAR(stvterm_start_date, 'YYYYMMDD') admit_date
+         ,shrtrit_sbgi_code inst_sbgi  
+         ,'00' opeid_branch_code
+         ,SUBSTR(REGEXP_REPLACE(stvsbgi_desc,'[^[:alnum:] ]*', NULL),1,80) inst_name
+         ,NVL(tran_gpa.trans_inst_gpa, 0) trans_inst_gpa
+         ,NVL(TRUNC(tran_gpa.trans_inst_hrs, 2), 0) trans_inst_hrs
+         ,passport.passport_type passport_type
+         ,CASE WHEN passport.pidm IS NOT NULL THEN passport.passport_awarded_date
+               ELSE NULL
+          END passport_awarded_date
+--         ,CASE WHEN passport.pidm IS NOT NULL THEN passport.inst_sbgi
+--               ELSE shrtrit_sbgi_code
+--          END inst_sbgi  
+--         ,'00' opeid_branch_code
+--         ,CASE WHEN passport.pidm IS NOT NULL THEN passport.inst_name
+--               ELSE stvsbgi_desc
+--          END inst_name 
+--         ,tran_gpa.trans_inst_gpa
+--         ,tran_gpa.trans_inst_hrs
+--         ,CASE WHEN passport.pidm IS NOT NULL THEN passport.passport_type
+--               ELSE NULL
+--          END passport_type
+--         ,CASE WHEN passport.pidm IS NOT NULL THEN passport.passport_awarded_date
+--               ELSE NULL
+--          END passport_awarded_date
+         ,stvmajr_cipc_code majr_cip
+         ,stvmajr_desc primary_major
+   FROM shrtrit
+   JOIN saradap sr ON shrtrit_pidm = sr.saradap_pidm
+                  AND sr.saradap_term_code_entry >= '201720' /*transfer term*/
+                  AND sr.saradap_term_code_entry <= :APT_run_term  /*filter out future dated admits*/
+                  AND sr.saradap_appl_date = (SELECT MAX(jr.saradap_appl_date)
+                                              FROM saradap jr
+                                              WHERE sr.saradap_pidm = jr.saradap_pidm
+                                                AND sr.saradap_term_code_entry = jr.saradap_term_code_entry
+                                                AND jr.saradap_term_code_entry >= '201720'
+                                                AND jr.saradap_appl_no = (SELECT MAX(so.saradap_appl_no)
+                                                                          FROM saradap so
+                                                                          WHERE jr.saradap_pidm = so.saradap_pidm
+                                                                            AND jr.saradap_term_code_entry = so.saradap_term_code_entry
+                                                                            AND so.saradap_term_code_entry >= '201720')
+                                                )
+                   AND sr.saradap_term_code_entry = (SELECT MIN(jr.saradap_term_code_entry)
+                                                     FROM saradap jr
+                                                     WHERE sr.saradap_pidm = jr.saradap_pidm
+                                                       AND jr.saradap_term_code_entry >= '201720')
+                   AND sr.saradap_admt_code IN ('TL','TM','IT','IU','YT','XT') /*transfer studetn admit types*/
+                   AND sr.saradap_levl_code = 'UG' /*restrict to UG students*/
+   JOIN stvmajr ON sr.saradap_majr_code_1 = stvmajr_code
+   JOIN stvterm ON sr.saradap_term_code_entry = stvterm_code
+   JOIN shrtram big ON shrtrit_pidm = big.shrtram_pidm
+                   AND shrtrit_seq_no = big.shrtram_trit_seq_no
+                   AND big.shrtram_term_code_entered = (SELECT MAX(lil.shrtram_term_code_entered) /*get the last institution they attended before transferring*/
+                                                        FROM shrtram lil
+                                                        WHERE big.shrtram_pidm = lil.shrtram_pidm
+                                                          AND sr.saradap_term_code_entry > lil.shrtram_term_code_entered)
+   JOIN stvsbgi ON stvsbgi_code = shrtrit_sbgi_code   
+   LEFT JOIN /*Has the student earned a passport?*/
+     (SELECT shrevnt_pidm pidm  /*Will need to tie this into the passport verify file that we get to identify the school they received the passport from - will also have to figure out how to match that school with the transfer schools on our records in banner*/
+--            ,shrtrit_sbgi_code inst_sbgi  
+--            ,'00' opeid_branch_code
+--            ,stvsbgi_desc inst_name 
+--            ,shrtrce_trit_seq_no trit_seq_no
+            ,'Interstate Passport LDGE' passport_type
+            ,TO_CHAR(shrevnt_effective_date, 'YYYYMMDD') passport_awarded_date
+      FROM shrevnt /*PTS is the transfer passport attribute*/
+      JOIN stvterm evnt_term 
+        ON shrevnt_effective_date BETWEEN evnt_term.stvterm_start_date AND evnt_term.stvterm_end_date
+       AND evnt_term.stvterm_code >= '201640' /*passport award term*/   
+      WHERE shrevnt_even_code = 'PTS'
+     )passport
+   ON shrtrit_pidm = passport.pidm
+   
+   LEFT JOIN /*Get GPA and Earned hours for each transfer institutuion*/
+     (SELECT shrtgpa_pidm pidm
+            ,shrtgpa_trit_seq_no trit_seq_no
+            ,CASE WHEN SUM(SHRTGPA_GPA_HOURS)<>0 THEN TRUNC(SUM(shrtgpa_quality_points)/SUM(shrtgpa_gpa_hours),2) /*GPA for total institution credits at time Passport is awarded*/
+                  ELSE NULL
+             END trans_inst_gpa
+            ,SUM(shrtgpa_hours_earned) trans_inst_hrs
+      FROM shrtgpa 
+      WHERE shrtgpa_gpa_type_ind = 'T'
+      GROUP BY shrtgpa_pidm
+              ,shrtgpa_trit_seq_no
+     )tran_gpa /*if the student has earned a passport join on the passport institution, if not join on most recently attended transfer institution*/
+   ON  shrtrit_pidm = tran_gpa.pidm -- NVL(passport.pidm, shrtrit_pidm) = tran_gpa.pidm
+   AND shrtrit_seq_no = tran_gpa.trit_seq_no --NVL(passport.trit_seq_no, shrtrit_seq_no) = tran_gpa.trit_seq_no
+     
+   WHERE shrtrit_sbgi_code NOT LIKE '9999%' /*filters out AP and other testing institutions*/
+     AND shrtrit_sbgi_code NOT IN ('4040','004040','000011') --filter out CEU and Credit by Advanced Coursework
+     
+ )popsel 
+ 
+JOIN spbpers /*Join to get privacy indicator, date of birth, sex, etc.*/
+  ON popsel.pidm = spbpers_pidm
+JOIN spriden 
+  ON popsel.pidm = spriden_pidm 
+ AND spriden_change_ind IS NULL
+ 
+LEFT JOIN  /*Race/Ethnicity: At USU this is a self reported field and tracked in two locations*/
+    (SELECT pidm,
+            CASE WHEN TRIM(race) LIKE '%,%' OR TRIM(race) = 'M' THEN '8'
+                 WHEN TRIM(race) IN ('H','Hispanic or Latino') THEN '2'
+                 WHEN TRIM(race) = 'S' THEN '4'
+                 WHEN TRIM(race) = 'I' THEN '3' 
+                 WHEN TRIM(race) = 'B' THEN '5'
+                 WHEN TRIM(race) IN ('P','A') THEN '6' 
+                 WHEN TRIM(race) = 'W' THEN '7' 
+                 ELSE '9'
+             END race_ethnicity   
+      FROM
+        (SELECT DISTINCT   
+                pidm,  
+                LISTAGG(race_cde, ', ') WITHIN GROUP(ORDER BY race_cde) race  
+          FROM   
+             (SELECT DISTINCT    /*Stored for official reporting to USHE and such*/
+                     gorprac_pidm pidm,  
+                     gorprac_race_cde race_cde  
+              FROM gorprac rac 
+              UNION
+              SELECT spbpers_pidm pidm, /*indicator if the student is Hispanic or Latino*/
+                     CASE WHEN spbpers_ethn_cde = '2' THEN 'Hispanic or Latino'  
+                          ELSE NULL  
+                      END race_cde
+               FROM spbpers
+             ) 
+         GROUP BY pidm  
+        )
+    )rac 
+ON popsel.pidm = rac.pidm 
+LEFT JOIN /*Is the student a veteran or in the military? This is stored in the student attribute table*/
+    (SELECT DISTINCT 
+            sgrsatt_pidm pidm
+      FROM sgrsatt king   
+      WHERE king.sgrsatt_atts_code IN ('AVET', 'UTGU', 'VET', 'VGIB', 'VTA','MASU') 
+        AND king.sgrsatt_term_code_eff = (SELECT max(queen.sgrsatt_term_code_eff)  
+                                          FROM sgrsatt queen  
+                                          WHERE queen.sgrsatt_pidm = king.sgrsatt_pidm) 
+        AND king.sgrsatt_pidm NOT IN (SELECT DISTINCT  
+                                             sr.sgrsatt_pidm pidm  
+                                      FROM sgrsatt sr  
+                                      JOIN sgrsatt att2 ON att2.sgrsatt_pidm = sr.sgrsatt_pidm  
+                                      where sr.sgrsatt_term_code_eff = (SELECT MAX(jr.sgrsatt_term_code_eff)  
+                                                                        FROM sgrsatt jr  
+                                                                        WHERE jr.sgrsatt_pidm = sr.sgrsatt_pidm  
+                                                                          AND jr.sgrsatt_atts_code IS NULL 
+                                                                        )  
+                                        AND att2.sgrsatt_term_code_eff = (SELECT MAX (slv.sgrsatt_term_code_eff)  
+                                                                          FROM sgrsatt slv   
+                                                                          WHERE slv.sgrsatt_pidm = att2.sgrsatt_pidm  
+                                                                            AND slv.sgrsatt_atts_code IN ('AVET', 'UTGU', 'VET', 'VGIB', 'VTA','MASU') 
+                                                                         )  
+                                        AND att2.sgrsatt_term_code_eff < sr.sgrsatt_term_code_eff) 
+  )vet 
+ON popsel.pidm = vet.pidm
+
+LEFT JOIN sgrsatt ON popsel.pidm = sgrsatt_pidm AND sgrsatt_atts_code = 'FGS' /*first generation students - stored in the student attribute table*/
+
+JOIN /*course information*/
+  (SELECT shrtckn_pidm pidm,
+          shrtckn_term_code term,
+          shrtckn_subj_code course_name,
+          shrtckn_crse_numb course_number,
+          NVL(SUBSTR(REGEXP_REPLACE(shrtckn_crse_title,'[^[:alnum:] ]*', NULL),1,250), 'NOT APPLICABLE') course_title,
+          CASE WHEN SUBSTR(shrtckn_term_code,-2,2) = '20' THEN 'Spring'
+               WHEN SUBSTR(shrtckn_term_code,-2,2) = '30' THEN 'Summer'
+               WHEN SUBSTR(shrtckn_term_code,-2,2) = '40' THEN 'Fall'
+          END course_term_session,
+          NVL(TO_CHAR(shrtckn_ptrm_start_date, 'YYYYMMDD'),TO_CHAR(stvterm_start_date, 'YYYYMMDD'))  course_begin_date,
+          NVL(TO_CHAR(shrtckn_ptrm_end_date, 'YYYYMMDD'), TO_CHAR(stvterm_end_date, 'YYYYMMDD'))  course_end_date,
+          CASE WHEN mstr.shrtckg_grde_code_final LIKE '%I%' THEN 'DNC'
+               WHEN mstr.shrtckg_grde_code_final LIKE '%W%' THEN 'Withdrawal' 
+               WHEN mstr.shrtckg_grde_code_final LIKE 'NF%' THEN 'F'
+               WHEN mstr.shrtckg_grde_code_final = 'NF' THEN 'F'
+               ELSE REGEXP_REPLACE(mstr.shrtckg_grde_code_final,'[^[:alnum:]+-]*', NULL) 
+          END course_grade,
+          TO_CHAR(mstr.shrtckg_final_grde_chg_date, 'YYYYMMDD') grade_effective_date,
+          mstr.shrtckg_credit_hours credits,
+          'Semester Hour Credit' credit_description /*usu is on a semester not quater system*/
+   FROM shrtckn
+   JOIN shrtckg mstr ON shrtckn_pidm = mstr.shrtckg_pidm /*Join grade information*/
+            AND shrtckn_term_code = mstr.shrtckg_term_code 
+            AND shrtckn_seq_no = mstr.shrtckg_tckn_seq_no
+            AND mstr.shrtckg_seq_no = (SELECT MAX(slv.shrtckg_seq_no) /*get max final grade*/
+                                       FROM shrtckg slv
+                                       WHERE mstr.shrtckg_pidm = slv.shrtckg_pidm
+                                         AND mstr.shrtckg_term_code = slv.shrtckg_term_code
+                                         AND mstr.shrtckg_tckn_seq_no = slv.shrtckg_tckn_seq_no)
+            AND mstr.shrtckg_grde_code_final <> 'AU'
+            AND mstr.shrtckg_credit_hours > 0 /*NSC won't accept 0 credit hour courses*/
+--   JOIN stvsubj ON shrtckn_subj_code = stvsubj_code
+   JOIN stvterm ON shrtckn_term_code = stvterm_code
+   WHERE shrtckn_term_code = :APT_run_term  /*courses taken in their first semester*/
+)crse
+ON popsel.pidm = crse.pidm
+
+LEFT JOIN /*Did the student earn a degree in the semester (Associate's or Bachelor's only)*/
+  (SELECT shrdgmr_pidm pidm,
+          NVL(TO_CHAR(shrdgmr_grad_date, 'YYYYMMDD'), TO_CHAR(grd.stvterm_end_date, 'YYYYMMDD') ) degree_date, /*date is not always populated so use grad term when it's not*/
+          stvdlev_desc degree_type
+   FROM shrdgmr
+   JOIN sorlcur sr ON shrdgmr_pidm = sorlcur_pidm
+                AND sr.sorlcur_lmod_code = 'OUTCOME'
+                AND sr.sorlcur_curr_rule = shrdgmr_curr_rule_1
+    JOIN sorlfos ON shrdgmr_pidm = sorlfos_pidm
+                AND sorlcur_seqno = sorlfos_lcur_seqno
+                AND sorlfos_lfst_code = 'MAJOR'
+                AND sorlfos_cact_code = 'ACTIVE'
+                AND SORLFOS_CSTS_CODE = 'AWARDED'
+   JOIN stvdegc ON shrdgmr_degc_code = stvdegc_code AND stvdegc_dlev_code IN ('AS','BA') /*filters to only associate and bachelors degrees*/ 
+   JOIN stvdlev ON stvdegc_dlev_code = stvdlev_code                
+   JOIN stvterm par ON :APT_run_term = par.stvterm_code
+   LEFT JOIN stvterm grd ON shrdgmr_term_code_grad = grd.stvterm_code
+   WHERE shrdgmr_term_code_grad = :APT_run_term
+    AND shrdgmr_degs_code = 'AW' /*awarded degree*/
+  )grad
+ON popsel.pidm = grad.pidm
+
+WHERE popsel.pidm NOT IN (SELECT DISTINCT 
+                                 shrdgmr_pidm
+                          FROM shrdgmr
+                          JOIN sorlcur sr ON shrdgmr_pidm = sorlcur_pidm AND sr.sorlcur_seqno = (SELECT MAX(jr.sorlcur_seqno)    
+                                                                                                 FROM sorlcur jr    
+                                                                                                 WHERE sr.sorlcur_pidm = jr.sorlcur_pidm    
+                                                                                                   AND jr.sorlcur_lmod_code = 'OUTCOME')     
+                          JOIN sorlfos ON shrdgmr_pidm = sorlfos_pidm AND SORLFOS_CSTS_CODE = 'AWARDED' AND SORLFOS_LFST_CODE = 'MAJOR'   
+                          JOIN stvdegc ON shrdgmr_degc_code = stvdegc_code AND stvdegc_dlev_code IN ('AS','BA','MA','DR') /*filters to associates and higher degrees*/ 
+                          WHERE shrdgmr_term_code_grad >= '201640'
+                            AND shrdgmr_degs_code = 'AW' /*awarded degree*/
+                         )
+                         
+ORDER BY transfer_student, passport, pidm, unique_id, course_prefix, course_number

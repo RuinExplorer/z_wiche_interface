@@ -1,0 +1,33 @@
+/*
+  Passport Verify
+  Returns a list of students currently attending (excludes audits) to submit to NSC.
+  NSC will return the students who have been awarded the Passport.
+  You can filter out the students who earned the Passport at your institution
+*/
+SELECT DISTINCT 
+      'PD1' record_type
+      ,NULL ssn /*optional*/
+      ,SUBSTR(spriden_first_name,1,60) first_name
+      ,SUBSTR(spriden_mi,1,60) middle_name /*optional*/
+      ,SUBSTR(spriden_last_name,1,60) last_name
+      ,SUBSTR(spbpers_name_suffix,1,5) suffix /*optional*/
+      ,EXTRACT(YEAR FROM spbpers_birth_date)|| SUBSTR(TO_CHAR(spbpers_birth_date, 'YYYYMMDD'),5,4) birthdate /*convert birthdate from DD-MON-YY format to YYYMMDD format*/
+      ,NULL date_passport_awarded
+      ,NULL filler1
+      ,NULL filler2
+      ,NULL filler3
+      ,NULL filler4
+      ,NULL filler5
+FROM sfrstcr
+JOIN stvrsts /*Student is registered in specified term - excludes audits and drops with W*/
+  ON sfrstcr_rsts_code = stvrsts_code
+ AND sfrstcr_term_code = :passport_request_term /*attend term or registration term*/
+ AND stvrsts_gradable_ind = 'Y'
+JOIN spriden /*Join for student name*/
+  ON sfrstcr_pidm = spriden_pidm
+ AND spriden_change_ind IS NULL
+JOIN spbpers /*Join to get privacy indicator, date of birth, and ssn*/
+  ON spriden_pidm = spbpers_pidm 
+ AND spriden_change_ind IS NULL
+ 
+ORDER BY last_name, first_name

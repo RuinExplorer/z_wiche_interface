@@ -1,0 +1,111 @@
+/*
+  All Passports Awarded at your Institution 
+  For NSC Passport Completion file
+*/
+SELECT DISTINCT 
+       'PD1' Record_type
+      ,NULL ssn /*optional*/
+      ,SUBSTR(REGEXP_REPLACE(spriden_first_name,'[^[:alnum:] ]*', NULL),1,60) first_name
+      ,SUBSTR(REGEXP_REPLACE(spriden_mi,'[^[:alnum:] ]*', NULL),1,60) middle_name /*optional*/
+      ,SUBSTR(REGEXP_REPLACE(spriden_last_name,'[^[:alnum:] ]*', NULL),1,60) last_name
+      ,SUBSTR(REGEXP_REPLACE(spbpers_name_suffix,'[^[:alnum:] ]*', NULL),1,5) suffix /*optional*/
+      ,NULL prev_last_name /*optional*/
+      ,NULL prev_first_name  /*optional*/
+      ,EXTRACT(YEAR FROM spbpers_birth_date)|| SUBSTR(TO_CHAR(spbpers_birth_date, 'YYYYMMDD'),5,4) birthdate /*convert birthdate from DD-MON-YY format to YYYMMDD format*/
+      ,spriden_id college_student_id /*optional*/
+      ,TRUNC(hrs.inst_ehrs, 2) inst_earned_hrs
+      ,NULL passport_type /*optional*/
+      ,'Interstate Passport LDGE' passport_title
+      ,'Utah State University' school_Awarding_Passport /*optional*/      
+      ,NULL joint_school /*joint school/college/division Awarding Pasport - optional*/
+      ,TO_CHAR(shrevnt_effective_date, 'YYYYMMDD') passport_awarded_date
+      ,hrs.gpa inst_gpa 
+      ,SUBSTR(REGEXP_REPLACE(pri.stvmajr_desc,'[^[:alnum:] ]*', NULL),1,80) major_course1 /*optional*/
+      ,SUBSTR(REGEXP_REPLACE(sec.stvmajr_desc,'[^[:alnum:] ]*', NULL),1,80) major_course2 /*optional*/
+      ,NULL major_course3 /*optional*/
+      ,NULL major_course4 /*optional*/
+      ,NULL filler1
+      ,SUBSTR(REGEXP_REPLACE(minr1.stvmajr_desc,'[^[:alnum:] ]*', NULL),1,80) minor_course1 /*optional*/
+      ,SUBSTR(REGEXP_REPLACE(minr12.stvmajr_desc,'[^[:alnum:] ]*', NULL),1,80) minor_course2 /*optional*/
+      ,SUBSTR(REGEXP_REPLACE(minr2.stvmajr_desc,'[^[:alnum:] ]*', NULL),1,80) minor_course3 /*optional*/
+      ,NULL minor_course4 /*optional*/
+      ,NULL filler2
+      ,NULL major_option1 /*optional*/
+      ,NULL major_option2 /*optional*/
+      ,NULL filler3
+      ,SUBSTR(REGEXP_REPLACE(conc1.stvmajr_desc,'[^[:alnum:] ]*', NULL),1,80) major_conc1 /*optional*/
+      ,SUBSTR(REGEXP_REPLACE(conc2.stvmajr_desc,'[^[:alnum:] ]*', NULL),1,80) major_conc2 /*optional*/
+      ,NULL major_conc3 /*optional*/
+      ,NULL filler4
+      ,CASE WHEN pri.stvmajr_cipc_code = 'CONV' THEN NULL ELSE SUBSTR(pri.stvmajr_cipc_code,1,6) END major_cipc1 /*optional*/
+      ,CASE WHEN sec.stvmajr_cipc_code = 'CONV' THEN NULL ELSE SUBSTR(sec.stvmajr_cipc_code,1,6) END major_cipc2 /*optional*/
+      ,NULL major_cipc3 /*optional*/
+      ,NULL major_cipc4 /*optional*/
+      ,NULL filler5
+      ,CASE WHEN minr1.stvmajr_cipc_code = 'CONV' THEN NULL ELSE SUBSTR(minr1.stvmajr_cipc_code,1,6) END minor_cipc1 /*optional*/
+      ,CASE WHEN minr12.stvmajr_cipc_code = 'CONV' THEN NULL ELSE SUBSTR(minr12.stvmajr_cipc_code,1,6) END minor_cipc2 /*optional*/
+      ,CASE WHEN minr2.stvmajr_cipc_code = 'CONV' THEN NULL ELSE SUBSTR(minr2.stvmajr_cipc_code,1,6) END minor_cipc3 /*optional*/
+      ,NULL minor_cipc4 /*optional*/
+      ,NULL filler6
+      ,NULL academic_honors /*optional*/      
+      ,NULL filler7
+      ,NULL honors_program /*optional*/
+      ,NULL filler8
+      ,NULL other_honors
+      ,NULL attendance_from_date /*optional*/
+      ,NULL attendance_to_date /*optional*/
+      ,NVL(spbpers_confid_ind, 'N') ferpa_privacy_ind
+      ,NULL school_financial_block /*optional*/      
+      ,NULL filler9
+      ,NULL degree_granting_inst/*optional*/
+      ,NULL Reverse_Transfer_Flag /*optional*/
+      ,NULL Certificate_Type /*optional*/
+      ,NULL filler10
+FROM spriden
+
+JOIN spbpers /*Join to get privacy indicator, date of birth, and ssn*/
+  ON spriden_pidm = spbpers_pidm 
+ AND spriden_change_ind IS NULL
+ 
+JOIN shrevnt /*Our Pilot passport is stored as a tranfer course.  We now store it as a transcript event*/
+  ON spriden_pidm = shrevnt_pidm
+ AND shrevnt_even_code = 'PNS' /*Passport Native Student event code*/
+JOIN stvterm evnt_term 
+  ON shrevnt_effective_date BETWEEN evnt_term.stvterm_start_date AND evnt_term.stvterm_end_date
+ AND evnt_term.stvterm_code = :passport_award_term
+  
+JOIN sgbstdn sr /*join to get major information at the time of the passport award term*/
+  ON spriden_pidm = sr.sgbstdn_pidm
+ AND sr.sgbstdn_term_code_eff = (SELECT MAX(jr.sgbstdn_term_code_eff)
+                                 FROM sgbstdn jr
+                                 WHERE sr.sgbstdn_pidm = jr.sgbstdn_pidm
+                                   AND jr.sgbstdn_term_code_eff <= :passport_award_term)
+/*major, minor, concentrations, and cipcodes */                                   
+JOIN stvmajr pri ON sr.sgbstdn_majr_code_1 = pri.stvmajr_code
+LEFT JOIN stvmajr sec ON sr.sgbstdn_majr_code_2 = sec.stvmajr_code
+LEFT JOIN stvmajr minr1 ON sr.sgbstdn_majr_code_minr_1 = minr1.stvmajr_code
+LEFT JOIN stvmajr minr12 ON sr.sgbstdn_majr_code_minr_1_2 = minr12.stvmajr_code
+LEFT JOIN stvmajr minr2 ON sr.sgbstdn_majr_code_minr_2 = minr2.stvmajr_code
+LEFT JOIN stvmajr conc1 ON sr.sgbstdn_majr_code_conc_1 = conc1.stvmajr_code
+LEFT JOIN stvmajr conc2 ON sr.sgbstdn_majr_code_conc_2 = conc2.stvmajr_code
+
+LEFT JOIN /*Number of Institutional Earned Credit hours at the time of the passport aw*/
+  (SELECT shrtgpa_pidm pidm,
+          CASE
+               WHEN SUM(SHRTGPA_GPA_HOURS)<>0 THEN TRUNC(SUM(shrtgpa_quality_points)/SUM(shrtgpa_gpa_hours),2) /*GPA for total institution credits at time Passport is awarded*/
+               ELSE NULL
+          END gpa,
+          SUM(shrtgpa_hours_earned) inst_ehrs
+   FROM shrtgpa
+   WHERE shrtgpa_term_code <= :passport_award_term /*hours and GPA up through the passport award term*/
+     AND shrtgpa_gpa_type_ind = 'I' /*institutional only*/
+     AND shrtgpa_levl_code = 'UG' /*hours at the undergrad level*/
+   GROUP BY shrtgpa_pidm
+  )hrs
+ON spriden_pidm = hrs.pidm
+
+--NSC has GPA and Earned Hours restrictions
+WHERE hrs.gpa > 0
+  AND hrs.inst_ehrs > 3
+    
+ORDER BY passport_awarded_date, last_name, first_name

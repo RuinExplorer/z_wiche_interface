@@ -1,0 +1,650 @@
+/*
+  Students who meet the Passport Requirements
+*/
+
+SELECT DISTINCT 
+       popsel.pidm
+      ,spriden_id anumber
+      ,spriden_last_name lastname
+      ,spriden_first_name firstname
+FROM 
+ (SELECT sgbstdn_pidm pidm 
+  FROM  sgbstdn sr 
+  JOIN sfrstcr ON sr.sgbstdn_pidm = sfrstcr_pidm 
+              AND sfrstcr_term_code = :term_code
+  JOIN stvrsts ON sfrstcr_rsts_code = stvrsts_code
+              AND stvrsts_incl_sect_enrl = 'Y'
+              AND stvrsts_withdraw_ind = 'N'
+  WHERE sr.sgbstdn_term_code_eff = (SELECT MAX(jr.sgbstdn_term_code_eff) /*Get the student's max SGASTDN record up to the specified term*/
+                                    FROM sgbstdn jr 
+                                    WHERE sr.sgbstdn_pidm=jr.sgbstdn_pidm 
+                                      AND jr.sgbstdn_term_code_eff <= :term_code) 
+    AND sr.sgbstdn_levl_code = 'UG' /*restrict to UG students*/
+    AND sr.sgbstdn_stst_code = 'AS' /*restrict to students with Active Status*/
+    AND sr.sgbstdn_admt_code <> '2B' /*Exclude Second Bachelors students*/
+    AND sr.sgbstdn_styp_code <> 'H' /*Exclude Concurrent Enrollment Students*/
+    AND sr.sgbstdn_pidm NOT IN (SELECT shrdgmr_pidm /*Exclude students who have already graduated or applied to graduate in the same degree as they are pursuing in SGASTDN*/
+                              FROM shrdgmr
+                              WHERE sgbstdn_levl_code = shrdgmr_levl_code
+                                AND sgbstdn_degc_code_1 = shrdgmr_degc_code)
+    AND sr.sgbstdn_pidm NOT IN (SELECT shrevnt_pidm /*Exclude students who have already been awarded the passport*/
+                              FROM shrevnt
+                              WHERE shrevnt_even_code IN ('IPT','IPN','PTS','PNS'))
+    AND trunc(registrar_office.f_cum_gpa_snapshot(sr.sgbstdn_pidm, :term_code, 'UG', 'I'),2) > 0 /*USU GPA greater than 0*/
+    AND registrar_office.f_cum_ehrs_snapshot(sr.sgbstdn_pidm, :term_code, 'UG', 'I') > 3 /* USU earned Hours greater than or equal to three*/
+ )popsel 
+
+JOIN spriden ON popsel.pidm = spriden_pidm AND spriden_change_ind IS NULL
+ 
+
+JOIN /*********CL1 Requirements**********/
+   (SELECT shrtckn_pidm pidm /*English taken at your institution*/ 
+    FROM shrtckn 
+    JOIN shrtckg sr
+      ON shrtckn_pidm = sr.shrtckg_pidm 
+     AND shrtckn_term_code = sr.shrtckg_term_code 
+     AND shrtckn_seq_no = sr.shrtckg_tckn_seq_no 
+     AND sr.shrtckg_seq_no = (SELECT MAX(jr.shrtckg_seq_no)  /*Gets the maximum final grade for the course*/  
+                              FROM shrtckg jr    
+                              WHERE sr.shrtckg_pidm = jr.shrtckg_pidm    
+                                AND sr.shrtckg_tckn_seq_no = jr.shrtckg_tckn_seq_no   
+                                AND jr.shrtckg_term_code = shrtckn_term_code)
+    JOIN shrgrde sr 
+      ON shrtckg_grde_code_final = shrgrde_code
+     AND shrgrde_levl_code = 'UG' 
+     AND shrgrde_gpa_ind = 'Y'  
+     AND shrgrde_quality_points >= 2 /*grade is a c or better*/
+    JOIN scrattr 
+      ON shrtckn_subj_code = scrattr_subj_code 
+     AND shrtckn_crse_numb = scrattr_crse_numb
+     AND scrattr_attr_code IN ('CL1','CL') /*Course has CL1 attribute*/
+     AND scrattr_eff_term = (SELECT MAX(scrattr_eff_term)
+                             FROM scrattr 
+                             WHERE scrattr_subj_code = shrtckn_subj_code
+                               AND scrattr_crse_numb = shrtckn_crse_numb
+                               AND scrattr_eff_term <= shrtckn_term_code)
+    WHERE shrtckn_crse_title NOT LIKE 'INTER%'
+      AND (shrtckn_repeat_course_ind IS NULL OR shrtckn_repeat_course_ind = 'I') /*if course is a repeat only count the Included course*/
+      
+   UNION /*Transfer ENGL*/
+  
+    SELECT shrtrce_pidm pidm
+--   SELECT DISTINCT
+--            shrtrce_subj_code,
+--            shrtrce_crse_numb,
+--            shrtrce_crse_title,
+--            shrtatt_attr_code
+    FROM shrtrce
+    JOIN shrgrde sr 
+      ON shrtrce_grde_code = shrgrde_abbrev  
+     AND shrgrde_levl_code = 'UG' 
+     AND shrgrde_gpa_ind = 'Y' 
+     AND shrgrde_quality_points >= 2 /*grade is a c or better*/
+    JOIN shrtatt 
+      ON shrtrce_pidm = shrtatt_pidm
+     AND shrtrce_seq_no = shrtatt_trce_seq_no
+     AND shrtrce_trcr_seq_no = shrtatt_trcr_seq_no
+     AND shrtrce_trit_seq_no = shrtatt_trit_seq_no
+     AND shrtrce_tram_seq_no = shrtatt_tram_seq_no
+     AND shrtatt_attr_code IN ('CL1','CL') /*Course has CL1 attribute*/
+    WHERE CASE WHEN shrtatt_attr_code = 'CL' AND shrtrce_crse_numb <> 'CL2' AND SUBSTR(shrtrce_crse_numb,1,1) = '1' THEN '1'
+               WHEN  shrtatt_attr_code = 'CL1' THEN '1'
+          END = '1'
+      AND (shrtrce_repeat_course IS NULL OR shrtrce_repeat_course = 'I')     
+      
+    UNION /*ENGL ACT */
+
+    SELECT DISTINCT
+           sortest_pidm pidm
+    FROM sortest sr
+    WHERE sortest_tesc_code = 'A01'
+      AND sortest_test_score >= 29
+
+    UNION /*ENGL SAT*/
+
+    SELECT DISTINCT
+           sortest_pidm pidm
+    FROM sortest sr
+    WHERE sortest_tesc_code = 'S01'
+      AND sortest_test_score >= 640
+      
+    UNION /*ENGL RSAT*/
+
+    SELECT DISTINCT
+           sortest_pidm pidm
+    FROM sortest sr
+    WHERE sortest_tesc_code = 'S13'
+      AND sortest_test_score >= 34
+  )cl1 
+ON popsel.pidm = cl1.pidm 
+
+JOIN /*********CL2 Requirements**********/
+   (SELECT shrtckn_pidm pidm /*English taken at your institution*/  
+--    SELECT DISTINCT shrtckn_subj_code, shrtckn_crse_numb, shrtckn_crse_title, scrattr_attr_code
+    FROM shrtckn 
+    JOIN shrtckg sr
+      ON shrtckn_pidm = sr.shrtckg_pidm 
+     AND shrtckn_term_code = sr.shrtckg_term_code 
+     AND shrtckn_seq_no = sr.shrtckg_tckn_seq_no 
+     AND sr.shrtckg_seq_no = (SELECT MAX(jr.shrtckg_seq_no)  /*Gets the maximum final grade for the course*/  
+                              FROM shrtckg jr    
+                              WHERE sr.shrtckg_pidm = jr.shrtckg_pidm    
+                                AND sr.shrtckg_tckn_seq_no = jr.shrtckg_tckn_seq_no   
+                                AND jr.shrtckg_term_code = shrtckn_term_code)
+    JOIN shrgrde sr 
+      ON shrtckg_grde_code_final = shrgrde_code
+     AND shrgrde_levl_code = 'UG' 
+     AND shrgrde_gpa_ind = 'Y'  
+     AND shrgrde_quality_points >= 2 /*grade is a c or better*/
+    JOIN scrattr 
+      ON shrtckn_subj_code = scrattr_subj_code 
+     AND shrtckn_crse_numb = scrattr_crse_numb
+     AND scrattr_attr_code IN ('CL2','CL') /*Course has CL2 attribute*/
+     AND scrattr_eff_term = (SELECT MAX(scrattr_eff_term)
+                             FROM scrattr 
+                             WHERE scrattr_subj_code = shrtckn_subj_code
+                               AND scrattr_crse_numb = shrtckn_crse_numb
+                               AND scrattr_eff_term <= shrtckn_term_code)
+    WHERE shrtckn_crse_title NOT LIKE 'INTRO%'
+      AND (shrtckn_repeat_course_ind IS NULL OR shrtckn_repeat_course_ind = 'I') /*if course is a repeat only count the Included course*/
+      
+   UNION /*Transfer ENGL*/
+  
+    SELECT shrtrce_pidm pidm
+--   SELECT DISTINCT
+--            shrtrce_subj_code,
+--            shrtrce_crse_numb,
+--            shrtrce_crse_title,
+--            shrtatt_attr_code
+    FROM shrtrce
+    JOIN shrgrde sr 
+      ON shrtrce_grde_code = shrgrde_abbrev  
+     AND shrgrde_levl_code = 'UG' 
+     AND shrgrde_gpa_ind = 'Y' 
+     AND shrgrde_quality_points >= 2 /*grade is a c or better*/
+    JOIN shrtatt 
+      ON shrtrce_pidm = shrtatt_pidm
+     AND shrtrce_seq_no = shrtatt_trce_seq_no
+     AND shrtrce_trcr_seq_no = shrtatt_trcr_seq_no
+     AND shrtrce_trit_seq_no = shrtatt_trit_seq_no
+     AND shrtrce_tram_seq_no = shrtatt_tram_seq_no
+     AND shrtatt_attr_code IN ('CL2','CL') /*Course has CL2 attribute*/
+    WHERE CASE WHEN shrtatt_attr_code = 'CL' AND shrtrce_crse_numb NOT IN ('CL1','CL') AND SUBSTR(shrtrce_crse_numb,1,1) <> '1' THEN '1'
+               WHEN  shrtatt_attr_code = 'CL2' THEN '1'
+          END = '1'
+      AND (shrtrce_repeat_course IS NULL OR shrtrce_repeat_course = 'I')   
+  )cl2 
+ON popsel.pidm = cl2.pidm 
+ 
+JOIN /*Check the QL requirement*/
+   (SELECT shrtckn_pidm pidm /*Math course taken at USU*/
+    FROM shrtckn  
+      JOIN shrtckg sr
+        ON shrtckn_pidm = sr.shrtckg_pidm 
+       AND shrtckn_term_code = sr.shrtckg_term_code 
+       AND shrtckn_seq_no = sr.shrtckg_tckn_seq_no 
+       AND sr.shrtckg_seq_no = (SELECT MAX(jr.shrtckg_seq_no)  /*Gets the maximum final grade for the course*/  
+                                FROM shrtckg jr    
+                                WHERE sr.shrtckg_pidm = jr.shrtckg_pidm    
+                                  AND sr.shrtckg_tckn_seq_no = jr.shrtckg_tckn_seq_no   
+                                  AND jr.shrtckg_term_code = shrtckn_term_code)
+      JOIN shrgrde sr 
+        ON shrtckg_grde_code_final = shrgrde_code
+       AND shrgrde_levl_code = 'UG' 
+       AND shrgrde_gpa_ind = 'Y'  
+       AND shrgrde_quality_points >= 2 /*grade is a c or better*/
+    JOIN scrattr 
+      ON shrtckn_subj_code = scrattr_subj_code 
+     AND shrtckn_crse_numb = scrattr_crse_numb
+     AND scrattr_attr_code = 'QL' /*Math requirement fulfilled by course with Quantitative Literacy attribute*/
+     AND scrattr_eff_term = (SELECT MAX(scrattr_eff_term)
+                             FROM scrattr 
+                             WHERE scrattr_subj_code = shrtckn_subj_code
+                               AND scrattr_crse_numb = shrtckn_crse_numb
+                               AND scrattr_eff_term <= shrtckn_term_code)
+    WHERE (shrtckn_repeat_course_ind IS NULL OR shrtckn_repeat_course_ind='I') 
+      
+   UNION
+  
+    SELECT shrtrce_pidm pidm /*Transfer Math*/
+--           DISTINCT
+--            shrtrce_subj_code,
+--            shrtrce_crse_numb,
+--            shrtrce_crse_title,
+--            shrtatt_attr_code
+    FROM shrtrce
+    JOIN shrgrde sr 
+      ON shrtrce_grde_code = shrgrde_abbrev  
+     AND shrgrde_levl_code = 'UG' 
+     AND shrgrde_gpa_ind = 'Y' 
+     AND shrgrde_quality_points >= 2 /*grade is a c or better*/
+    JOIN shrtatt 
+      ON shrtrce_pidm = shrtatt_pidm
+     AND shrtrce_seq_no = shrtatt_trce_seq_no
+     AND shrtrce_trcr_seq_no = shrtatt_trcr_seq_no
+     AND shrtrce_trit_seq_no = shrtatt_trit_seq_no
+     AND shrtrce_tram_seq_no = shrtatt_tram_seq_no
+     AND shrtatt_attr_code = 'QL'
+    WHERE (shrtrce_repeat_course IS NULL OR shrtrce_repeat_course = 'I') 
+      
+   UNION /*MATH ACT or SAT/ACT equivalency */
+
+    SELECT DISTINCT
+           sortest_pidm pidm
+    FROM sortest
+    WHERE (sortest_tesc_code IN ('A02','A02X')
+      AND sortest_test_score >= 25
+      AND sortest_test_date <= '30-SEP-16')
+      OR (sortest_tesc_code IN ('A02','A02X')
+      AND sortest_test_score >= 26
+      AND sortest_test_date > '30-SEP-16')
+      OR (sortest_tesc_code = 'SET'
+      AND sortest_test_score >= '25'
+      AND sortest_test_date <= '30-SEP-16')
+      OR (sortest_tesc_code = 'SET'
+      AND sortest_test_score >= '26'
+      AND sortest_test_date > '30-SEP-16')
+      
+      
+  )QL 
+ON popsel.pidm = QL.pidm
+
+JOIN  /*Check the BAI requirement*/
+   (SELECT shrtckn_pidm pidm /*taken at your institution*/
+    FROM shrtckn 
+    JOIN shrtckg sr
+      ON shrtckn_pidm = sr.shrtckg_pidm 
+     AND shrtckn_term_code = sr.shrtckg_term_code 
+     AND shrtckn_seq_no = sr.shrtckg_tckn_seq_no 
+     AND sr.shrtckg_seq_no = (SELECT MAX(jr.shrtckg_seq_no)  /*Gets the maximum final grade for the course*/  
+                              FROM shrtckg jr    
+                              WHERE sr.shrtckg_pidm = jr.shrtckg_pidm    
+                                AND sr.shrtckg_tckn_seq_no = jr.shrtckg_tckn_seq_no   
+                                AND jr.shrtckg_term_code = shrtckn_term_code)
+    JOIN shrgrde sr 
+      ON shrtckg_grde_code_final = shrgrde_code
+     AND shrgrde_levl_code = 'UG' 
+     AND shrgrde_gpa_ind = 'Y'  
+     AND shrgrde_quality_points >= 2 /*grade is a c or better*/
+    JOIN scrattr 
+      ON shrtckn_subj_code = scrattr_subj_code 
+     AND shrtckn_crse_numb = scrattr_crse_numb
+     AND scrattr_attr_code = 'BAI'  /*Course has BAI attribute*/
+     AND scrattr_eff_term = (SELECT MAX(scrattr_eff_term)
+                             FROM scrattr 
+                             WHERE scrattr_subj_code = shrtckn_subj_code
+                               AND scrattr_crse_numb = shrtckn_crse_numb
+                               AND scrattr_eff_term <= shrtckn_term_code)
+    WHERE (shrtckn_repeat_course_ind IS NULL OR shrtckn_repeat_course_ind = 'I') /*if course is a repeat only count the Included course*/
+      
+   UNION
+  
+    SELECT shrtrce_pidm pidm /*transferred*/
+    FROM shrtrce
+    JOIN shrgrde sr 
+      ON shrtrce_grde_code = shrgrde_code
+      AND shrgrde_levl_code = 'UG' 
+      AND shrgrde_gpa_ind = 'Y' /*included in the GPA*/
+     AND shrgrde_quality_points >= 2 /*grade is a c or better*/
+    JOIN shrtatt 
+      ON shrtrce_pidm = shrtatt_pidm
+     AND shrtrce_seq_no = shrtatt_trce_seq_no
+     AND shrtrce_trcr_seq_no = shrtatt_trcr_seq_no
+     AND shrtrce_trit_seq_no = shrtatt_trit_seq_no
+     AND shrtrce_tram_seq_no = shrtatt_tram_seq_no
+     AND shrtatt_attr_code = 'BAI' /*Course has BAI attribute*/
+    WHERE (shrtrce_repeat_course IS NULL OR shrtrce_repeat_course = 'I') /*if course is a repeat only count the Included course*/
+      
+  )BAI 
+ON popsel.pidm = BAI.pidm 
+
+JOIN  /*Check the BCA requirement*/
+   (SELECT shrtckn_pidm pidm /*taken at your institution*/
+    FROM shrtckn 
+    JOIN shrtckg sr
+      ON shrtckn_pidm = sr.shrtckg_pidm 
+     AND shrtckn_term_code = sr.shrtckg_term_code 
+     AND shrtckn_seq_no = sr.shrtckg_tckn_seq_no 
+     AND sr.shrtckg_seq_no = (SELECT MAX(jr.shrtckg_seq_no)  /*Gets the maximum final grade for the course*/  
+                              FROM shrtckg jr    
+                              WHERE sr.shrtckg_pidm = jr.shrtckg_pidm    
+                                AND sr.shrtckg_tckn_seq_no = jr.shrtckg_tckn_seq_no   
+                                AND jr.shrtckg_term_code = shrtckn_term_code)
+    JOIN shrgrde sr 
+      ON shrtckg_grde_code_final = shrgrde_code
+     AND shrgrde_levl_code = 'UG' 
+     AND shrgrde_gpa_ind = 'Y'  
+     AND shrgrde_quality_points >= 2 /*grade is a c or better*/
+    JOIN scrattr 
+      ON shrtckn_subj_code = scrattr_subj_code 
+     AND shrtckn_crse_numb = scrattr_crse_numb
+     AND scrattr_attr_code = 'BCA'  /*Course has BCA attribute*/
+     AND scrattr_eff_term = (SELECT MAX(scrattr_eff_term)
+                             FROM scrattr 
+                             WHERE scrattr_subj_code = shrtckn_subj_code
+                               AND scrattr_crse_numb = shrtckn_crse_numb
+                               AND scrattr_eff_term <= shrtckn_term_code)
+    WHERE (shrtckn_repeat_course_ind IS NULL OR shrtckn_repeat_course_ind = 'I') /*if course is a repeat only count the Included course*/
+      
+   UNION
+  
+    SELECT shrtrce_pidm pidm /*transferred*/
+    FROM shrtrce
+    JOIN shrgrde sr 
+      ON shrtrce_grde_code = shrgrde_code
+      AND shrgrde_levl_code = 'UG' 
+      AND shrgrde_gpa_ind = 'Y' /*included in the GPA*/
+     AND shrgrde_quality_points >= 2 /*grade is a c or better*/
+    JOIN shrtatt 
+      ON shrtrce_pidm = shrtatt_pidm
+     AND shrtrce_seq_no = shrtatt_trce_seq_no
+     AND shrtrce_trcr_seq_no = shrtatt_trcr_seq_no
+     AND shrtrce_trit_seq_no = shrtatt_trit_seq_no
+     AND shrtrce_tram_seq_no = shrtatt_tram_seq_no
+     AND shrtatt_attr_code = 'BCA' /*Course has BCA attribute*/
+    WHERE (shrtrce_repeat_course IS NULL OR shrtrce_repeat_course = 'I') /*if course is a repeat only count the Included course*/
+      
+  )BCA 
+ON popsel.pidm = BCA.pidm 
+
+JOIN  /*Check the BHU requirement*/
+   (SELECT shrtckn_pidm pidm /*taken at your institution*/
+    FROM shrtckn 
+    JOIN shrtckg sr
+      ON shrtckn_pidm = sr.shrtckg_pidm 
+     AND shrtckn_term_code = sr.shrtckg_term_code 
+     AND shrtckn_seq_no = sr.shrtckg_tckn_seq_no 
+     AND sr.shrtckg_seq_no = (SELECT MAX(jr.shrtckg_seq_no)  /*Gets the maximum final grade for the course*/  
+                              FROM shrtckg jr    
+                              WHERE sr.shrtckg_pidm = jr.shrtckg_pidm    
+                                AND sr.shrtckg_tckn_seq_no = jr.shrtckg_tckn_seq_no   
+                                AND jr.shrtckg_term_code = shrtckn_term_code)
+    JOIN shrgrde sr 
+      ON shrtckg_grde_code_final = shrgrde_code
+     AND shrgrde_levl_code = 'UG' 
+     AND shrgrde_gpa_ind = 'Y'  
+     AND shrgrde_quality_points >= 2 /*grade is a c or better*/
+    JOIN scrattr 
+      ON shrtckn_subj_code = scrattr_subj_code 
+     AND shrtckn_crse_numb = scrattr_crse_numb
+     AND scrattr_attr_code = 'BHU'  /*Course has BHU attribute*/
+     AND scrattr_eff_term = (SELECT MAX(scrattr_eff_term)
+                             FROM scrattr 
+                             WHERE scrattr_subj_code = shrtckn_subj_code
+                               AND scrattr_crse_numb = shrtckn_crse_numb
+                               AND scrattr_eff_term <= shrtckn_term_code)
+    WHERE (shrtckn_repeat_course_ind IS NULL OR shrtckn_repeat_course_ind = 'I') /*if course is a repeat only count the Included course*/
+      
+   UNION
+  
+    SELECT shrtrce_pidm pidm /*transferred*/
+    FROM shrtrce
+    JOIN shrgrde sr 
+      ON shrtrce_grde_code = shrgrde_code
+      AND shrgrde_levl_code = 'UG' 
+      AND shrgrde_gpa_ind = 'Y' /*included in the GPA*/
+     AND shrgrde_quality_points >= 2 /*grade is a c or better*/
+    JOIN shrtatt 
+      ON shrtrce_pidm = shrtatt_pidm
+     AND shrtrce_seq_no = shrtatt_trce_seq_no
+     AND shrtrce_trcr_seq_no = shrtatt_trcr_seq_no
+     AND shrtrce_trit_seq_no = shrtatt_trit_seq_no
+     AND shrtrce_tram_seq_no = shrtatt_tram_seq_no
+     AND shrtatt_attr_code = 'BHU'/*Course has BHU attribute*/
+    WHERE (shrtrce_repeat_course IS NULL OR shrtrce_repeat_course = 'I') /*if course is a repeat only count the Included course*/
+      
+  )BHU 
+ON popsel.pidm = BHU.pidm 
+
+JOIN  /*Check the BLS requirement*/
+   (SELECT shrtckn_pidm pidm /*taken at your institution*/
+    FROM shrtckn 
+    JOIN shrtckg sr
+      ON shrtckn_pidm = sr.shrtckg_pidm 
+     AND shrtckn_term_code = sr.shrtckg_term_code 
+     AND shrtckn_seq_no = sr.shrtckg_tckn_seq_no 
+     AND sr.shrtckg_seq_no = (SELECT MAX(jr.shrtckg_seq_no)  /*Gets the maximum final grade for the course*/  
+                              FROM shrtckg jr    
+                              WHERE sr.shrtckg_pidm = jr.shrtckg_pidm    
+                                AND sr.shrtckg_tckn_seq_no = jr.shrtckg_tckn_seq_no   
+                                AND jr.shrtckg_term_code = shrtckn_term_code)
+    JOIN shrgrde sr 
+      ON shrtckg_grde_code_final = shrgrde_code
+     AND shrgrde_levl_code = 'UG' 
+     AND shrgrde_gpa_ind = 'Y'  
+     AND shrgrde_quality_points >= 2 /*grade is a c or better*/
+    JOIN scrattr 
+      ON shrtckn_subj_code = scrattr_subj_code 
+     AND shrtckn_crse_numb = scrattr_crse_numb
+     AND scrattr_attr_code = 'BLS'  /*Course has BLS attribute*/
+     AND scrattr_eff_term = (SELECT MAX(scrattr_eff_term)
+                             FROM scrattr 
+                             WHERE scrattr_subj_code = shrtckn_subj_code
+                               AND scrattr_crse_numb = shrtckn_crse_numb
+                               AND scrattr_eff_term <= shrtckn_term_code)
+    WHERE (shrtckn_repeat_course_ind IS NULL OR shrtckn_repeat_course_ind = 'I') /*if course is a repeat only count the Included course*/
+      
+   UNION
+  
+    SELECT shrtrce_pidm pidm /*transferred*/
+    FROM shrtrce
+    JOIN shrgrde sr 
+      ON shrtrce_grde_code = shrgrde_code
+      AND shrgrde_levl_code = 'UG' 
+      AND shrgrde_gpa_ind = 'Y' /*included in the GPA*/
+     AND shrgrde_quality_points >= 2 /*grade is a c or better*/
+    JOIN shrtatt 
+      ON shrtrce_pidm = shrtatt_pidm
+     AND shrtrce_seq_no = shrtatt_trce_seq_no
+     AND shrtrce_trcr_seq_no = shrtatt_trcr_seq_no
+     AND shrtrce_trit_seq_no = shrtatt_trit_seq_no
+     AND shrtrce_tram_seq_no = shrtatt_tram_seq_no
+     AND shrtatt_attr_code = 'BLS' /*Course has BLS attribute*/
+    WHERE (shrtrce_repeat_course IS NULL OR shrtrce_repeat_course = 'I') /*if course is a repeat only count the Included course*/
+      
+  )BLS 
+ON popsel.pidm = BLS.pidm 
+
+JOIN  /*Check the BPS requirement*/
+   (SELECT shrtckn_pidm pidm /*taken at your institution*/
+    FROM shrtckn 
+    JOIN shrtckg sr
+      ON shrtckn_pidm = sr.shrtckg_pidm 
+     AND shrtckn_term_code = sr.shrtckg_term_code 
+     AND shrtckn_seq_no = sr.shrtckg_tckn_seq_no 
+     AND sr.shrtckg_seq_no = (SELECT MAX(jr.shrtckg_seq_no)  /*Gets the maximum final grade for the course*/  
+                              FROM shrtckg jr    
+                              WHERE sr.shrtckg_pidm = jr.shrtckg_pidm    
+                                AND sr.shrtckg_tckn_seq_no = jr.shrtckg_tckn_seq_no   
+                                AND jr.shrtckg_term_code = shrtckn_term_code)
+    JOIN shrgrde sr 
+      ON shrtckg_grde_code_final = shrgrde_code
+     AND shrgrde_levl_code = 'UG' 
+     AND shrgrde_gpa_ind = 'Y'  
+     AND shrgrde_quality_points >= 2 /*grade is a c or better*/
+    JOIN scrattr 
+      ON shrtckn_subj_code = scrattr_subj_code 
+     AND shrtckn_crse_numb = scrattr_crse_numb
+     AND scrattr_attr_code = 'BPS'  /*Course has BPS attribute*/
+     AND scrattr_eff_term = (SELECT MAX(scrattr_eff_term)
+                             FROM scrattr 
+                             WHERE scrattr_subj_code = shrtckn_subj_code
+                               AND scrattr_crse_numb = shrtckn_crse_numb
+                               AND scrattr_eff_term <= shrtckn_term_code)
+    WHERE (shrtckn_repeat_course_ind IS NULL OR shrtckn_repeat_course_ind = 'I') /*if course is a repeat only count the Included course*/
+      
+   UNION
+  
+    SELECT shrtrce_pidm pidm /*transferred*/
+    FROM shrtrce
+    JOIN shrgrde sr 
+      ON shrtrce_grde_code = shrgrde_code
+      AND shrgrde_levl_code = 'UG' 
+      AND shrgrde_gpa_ind = 'Y' /*included in the GPA*/
+     AND shrgrde_quality_points >= 2 /*grade is a c or better*/
+    JOIN shrtatt 
+      ON shrtrce_pidm = shrtatt_pidm
+     AND shrtrce_seq_no = shrtatt_trce_seq_no
+     AND shrtrce_trcr_seq_no = shrtatt_trcr_seq_no
+     AND shrtrce_trit_seq_no = shrtatt_trit_seq_no
+     AND shrtrce_tram_seq_no = shrtatt_tram_seq_no
+     AND shrtatt_attr_code = 'BPS' /*Course has BPS attribute*/
+    WHERE (shrtrce_repeat_course IS NULL OR shrtrce_repeat_course = 'I') /*if course is a repeat only count the Included course*/
+      
+  )BPS 
+ON popsel.pidm = BPS.pidm 
+
+JOIN  /*Check the BSS requirement*/
+   (SELECT shrtckn_pidm pidm /*taken at your institution*/
+    FROM shrtckn 
+    JOIN shrtckg sr
+      ON shrtckn_pidm = sr.shrtckg_pidm 
+     AND shrtckn_term_code = sr.shrtckg_term_code 
+     AND shrtckn_seq_no = sr.shrtckg_tckn_seq_no 
+     AND sr.shrtckg_seq_no = (SELECT MAX(jr.shrtckg_seq_no)  /*Gets the maximum final grade for the course*/  
+                              FROM shrtckg jr    
+                              WHERE sr.shrtckg_pidm = jr.shrtckg_pidm    
+                                AND sr.shrtckg_tckn_seq_no = jr.shrtckg_tckn_seq_no   
+                                AND jr.shrtckg_term_code = shrtckn_term_code)
+    JOIN shrgrde sr 
+      ON shrtckg_grde_code_final = shrgrde_code
+     AND shrgrde_levl_code = 'UG' 
+     AND shrgrde_gpa_ind = 'Y'  
+     AND shrgrde_quality_points >= 2 /*grade is a c or better*/
+    JOIN scrattr 
+      ON shrtckn_subj_code = scrattr_subj_code 
+     AND shrtckn_crse_numb = scrattr_crse_numb
+     AND scrattr_attr_code = 'BSS'  /*Course has BSS attribute*/
+     AND scrattr_eff_term = (SELECT MAX(scrattr_eff_term)
+                             FROM scrattr 
+                             WHERE scrattr_subj_code = shrtckn_subj_code
+                               AND scrattr_crse_numb = shrtckn_crse_numb
+                               AND scrattr_eff_term <= shrtckn_term_code)
+    WHERE (shrtckn_repeat_course_ind IS NULL OR shrtckn_repeat_course_ind = 'I') /*if course is a repeat only count the Included course*/
+      
+   UNION
+  
+    SELECT shrtrce_pidm pidm /*transferred*/
+    FROM shrtrce
+    JOIN shrgrde sr 
+      ON shrtrce_grde_code = shrgrde_code
+      AND shrgrde_levl_code = 'UG' 
+      AND shrgrde_gpa_ind = 'Y' /*included in the GPA*/
+     AND shrgrde_quality_points >= 2 /*grade is a c or better*/
+    JOIN shrtatt 
+      ON shrtrce_pidm = shrtatt_pidm
+     AND shrtrce_seq_no = shrtatt_trce_seq_no
+     AND shrtrce_trcr_seq_no = shrtatt_trcr_seq_no
+     AND shrtrce_trit_seq_no = shrtatt_trit_seq_no
+     AND shrtrce_tram_seq_no = shrtatt_tram_seq_no
+     AND shrtatt_attr_code = 'BSS' /*Course has BSS attribute*/
+    WHERE (shrtrce_repeat_course IS NULL OR shrtrce_repeat_course = 'I') /*if course is a repeat only count the Included course*/
+      
+  )BSS 
+ON popsel.pidm = BSS.pidm 
+
+JOIN /*********Exploration Requirements**********/
+(SELECT pidm,
+        SUM(numb_bai) tot_bai,
+        SUM(numb_bca) tot_bca,
+        SUM(numb_bhu) tot_bhu,
+        SUM(numb_bls) tot_bls,
+        SUM(numb_bps) tot_bps,
+        SUM(numb_bss) tot_bss,
+        SUM(numb_ql) tot_ql
+ FROM
+(SELECT pidm,
+        CASE WHEN attrs = 'BAI' THEN COUNT(DISTINCT course) END numb_bai,
+        CASE WHEN attrs = 'BCA' THEN COUNT(DISTINCT course) END numb_bca,
+        CASE WHEN attrs = 'BAI' THEN COUNT(DISTINCT course) END numb_bhu,
+        CASE WHEN attrs = 'BLS' THEN COUNT(DISTINCT course) END numb_bls,
+        CASE WHEN attrs = 'BPS' THEN COUNT(DISTINCT course) END numb_bps,
+        CASE WHEN attrs = 'BSS' THEN COUNT(DISTINCT course) END numb_bss,
+        CASE WHEN attrs = 'QL' THEN COUNT(DISTINCT course) END numb_ql
+  FROM
+      (SELECT DISTINCT shrtckn_pidm pidm,
+              shrtckn_subj_code||' '||shrtckn_crse_numb course,
+              shrtckn_crse_title title,
+              shrtckn_term_code term,
+              scrattr_attr_code attrs
+        FROM shrtckn
+        JOIN shrtckg sr ON shrtckn_pidm=shrtckg_pidm AND shrtckn_term_code=shrtckg_term_code AND shrtckn_seq_no=shrtckg_tckn_seq_no
+        JOIN scrattr 
+          ON shrtckn_subj_code = scrattr_subj_code 
+         AND shrtckn_crse_numb = scrattr_crse_numb
+         AND scrattr_attr_code IN ('BAI','BCA','BHU','BLS','BPS','BSS','QL') /*Course has BAI attribute*/
+         AND scrattr_eff_term = (SELECT MAX(scrattr_eff_term)
+                                 FROM scrattr 
+                                 WHERE scrattr_subj_code = shrtckn_subj_code
+                                   AND scrattr_crse_numb = shrtckn_crse_numb
+                                   AND scrattr_eff_term <= shrtckn_term_code)
+        WHERE shrtckg_gmod_code <> 'N'
+          AND sr.shrtckg_seq_no = (SELECT MAX(jr.shrtckg_seq_no)
+                                    FROM shrtckg jr
+                                    WHERE sr.shrtckg_pidm = jr.shrtckg_pidm
+                                      AND sr.shrtckg_term_code = jr.shrtckg_term_code
+                                      AND sr.shrtckg_tckn_seq_no = jr.shrtckg_tckn_seq_no)
+          AND shrtckg_grde_code_final IN (SELECT shrgrde_abbrev FROM shrgrde WHERE shrgrde_levl_code = 'UG' AND shrgrde_passed_ind = 'Y')
+
+
+   UNION  /*Current Term*/
+
+      SELECT DISTINCT
+             sfrstcr_pidm pidm,
+             ssbsect_subj_code||' '||ssbsect_crse_numb course,
+             scbcrse_title title,
+             sfrstcr_term_code term,
+             scrattr_attr_code attrs
+        FROM sfrstcr
+        JOIN ssvsect ON sfrstcr_term_code = ssbsect_term_code AND sfrstcr_crn = ssbsect_crn
+        JOIN scrattr 
+          ON ssbsect_subj_code = scrattr_subj_code 
+         AND ssbsect_crse_numb = scrattr_crse_numb
+         AND scrattr_attr_code IN ('BAI','BCA','BHU','BLS','BPS','BSS','QL') /*Course has BAI attribute*/
+        WHERE sfrstcr_gmod_code <> 'N'
+          AND sfrstcr_rsts_code IN (SELECT stvrsts_code
+                                      FROM stvrsts
+                                      WHERE stvrsts_wait_ind = 'N'
+                                        AND stvrsts_withdraw_ind = 'N'
+                                        AND stvrsts_voice_type <> 'D'
+                                        AND stvrsts_attempt_hr_ind='Y')
+          AND sfrstcr_grde_code IN (SELECT shrgrde_abbrev FROM shrgrde WHERE shrgrde_levl_code = 'UG' AND shrgrde_passed_ind = 'Y')
+          AND sfrstcr_term_code IN (SELECT stvterm_code
+                                      FROM stvterm
+                                      WHERE stvterm_end_date >= SYSDATE)
+
+      UNION /*Transfer*/
+
+      SELECT DISTINCT
+             shrtrce_pidm pidm,
+             shrtrce_subj_code||' '||shrtrce_crse_numb course,
+             shrtrce_crse_title title,
+             shrtrce_term_code_eff term,
+             shrtatt_attr_code attrs
+        FROM shrtrce
+        JOIN shrtatt 
+          ON shrtrce_pidm = shrtatt_pidm
+         AND shrtrce_seq_no = shrtatt_trce_seq_no
+         AND shrtrce_trcr_seq_no = shrtatt_trcr_seq_no
+         AND shrtrce_trit_seq_no = shrtatt_trit_seq_no
+         AND shrtrce_tram_seq_no = shrtatt_tram_seq_no
+         AND shrtatt_attr_code IN ('BAI','BCA','BHU','BLS','BPS','BSS','QL')
+        WHERE shrtrce_grde_code IN (SELECT shrgrde_abbrev FROM shrgrde WHERE shrgrde_levl_code = 'UG' AND shrgrde_passed_ind = 'Y')
+      )
+
+  GROUP BY pidm,
+           attrs
+)
+  GROUP BY pidm
+  HAVING (SUM(numb_bai)>= 2
+       OR SUM(numb_bca) >= 2
+       OR SUM(numb_bhu) >= 2
+       OR SUM(numb_bls) >= 2
+       OR SUM(numb_bps) >= 2
+       OR SUM(numb_bss) >= 2
+       OR SUM(numb_ql) >= 2)
+)explor
+ON popsel.pidm = explor.pidm
+
+
+ORDER BY lastname, firstname
